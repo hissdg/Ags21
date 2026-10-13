@@ -1,12 +1,16 @@
 # AGS21 —— GitHub Actions 云编译
 
-这套东西**现在不用**。等设备起来、两个 LAN 口实测确认、DTS 定稿之后再启用。
+> **状态（2026-10-13）**：**已启用。** 仓库 `kunude/Ags21`（Public），
+> `stage=sync` 已跑通（约 4 分钟、全绿 ⇒ 三处补丁在上游 v25.12.5 上仍能干净应用）。
+> `stage=all` 尚未跑过 —— 日常迭代仍优先走本地，理由见 §9。
 
 ---
 
 ## 1. 它解决什么问题
 
-本地编译（WSL，20 核）出一次包要 1-3 小时，跑的时候整台机器被占满。
+本地编译（WSL，20 核）**首次全量**要 1-3 小时，跑的时候整台机器被占满。
+（若本地已有**预热构建树**，后续增量只要 **2 分钟左右** —— 2026-10-13 实测
+`--stage=all` 为 2 分 0.5 秒。所以"本地够快"只在增量成立；换机器或清树后又回到 1-3 小时。）
 而移植定稿之后，"改一行 DTS 重新出包"这种事会反复发生。
 
 云编译把这件事变成点一下按钮：
@@ -31,7 +35,9 @@
 | `ci/config.seed` | 配置种子（纯 ASCII）。**要加包、改参数就改这里** |
 
 被复用、没有复制一份的：`build/build-ags21.sh`（补丁 + 编译）、`build/filogic.mk.add`、
-`build/fit_configs.py`、`mt7981b-aigo-ags21.dts`。
+`build/fit_configs.py`、`mt7981b-aigo-ags21.dts`，以及首启脚本
+`build/99-ags21-luci-cachebust`（随 target 覆盖层进镜像；它解决的问题见
+`明日操作卡.md` 10.8 节 —— 不改前端代码却看不到页面变化时，先看那一节）。
 
 ---
 
@@ -41,6 +47,10 @@
 
 **用 Public。** 私有仓库的 Actions 有月度分钟配额（约 2000 分钟），而一次冷跑就要
 1.5-3 小时，两三次就烧掉大半；公开仓库的 Actions 是免费的、不限时长。
+
+> 本次实际建的是 **`kunude/Ags21`**。⚠ **规范名是大写 `Ags21`** ——
+> GitHub 仓库名大小写不敏感，小写 `ags21` 只是个跳转；`git remote` 一定要写规范名，
+> 否则每次 push 都会多一句 `This repository moved... Ags21.git` 提示。
 
 ### 3.2 push 之前 —— 先看这一节
 
@@ -77,7 +87,7 @@ git config user.email "kunude@users.noreply.github.com"
 git add .
 git status                        # ← 再确认一次
 git commit -m "AGS21: OpenWrt 25.12.5 移植 + 云编译流水线"
-git remote add origin git@github.com:kunude/ags21.git
+git remote add origin git@github.com:kunude/Ags21.git
 git push -u origin main
 ```
 
