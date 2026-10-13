@@ -1,0 +1,160 @@
+# ============================================================================
+#  AGS21 OpenWrt config seed
+#
+#  ci/ci-build.sh copies this file verbatim into openwrt/.config, then lets
+#  `make defconfig` expand it into the full several-thousand-line config.
+#  To add packages or change options, edit HERE -- never the generated .config.
+#
+#  NOTE: keep this file pure ASCII. It is fed straight to the Kconfig parser
+#  and the runner's locale may be C. For what each line means (in Chinese),
+#  see ci/README.md.
+# ============================================================================
+
+# --- target platform: mediatek / filogic (MT7981, MT7986 ... WiFi6 SoCs) ---
+CONFIG_TARGET_mediatek=y
+CONFIG_TARGET_mediatek_filogic=y
+
+# --- select exactly one device: AGS21 ---
+# DEVICE_ direct-select syntax, i.e. the menuconfig "Target Devices" checkbox.
+# Side effect: DEVICE_PACKAGES (the kmod-mt7915e / mt7981-wo-firmware list in
+# filogic.mk) will NOT show up as CONFIG_PACKAGE_xxx=y here. That is correct --
+# include/image.mk passes them via CONFIG_TARGET_DEVICE_PACKAGES_<target>_<device>.
+# So "kmod-mt7915e is missing from .config" is not a sign the config failed.
+CONFIG_TARGET_mediatek_filogic_DEVICE_aigo_ags21=y
+
+# --- rootfs partition size: 448 MB ---
+# DO NOT change casually. filogic.mk has:
+#     IMAGE_SIZE := $(shell expr 64 + $(CONFIG_TARGET_ROOTFS_PARTSIZE))m
+# 448 gives 512 MiB, which is exactly the production partition (448M@64M) of
+# the device's official GPT. Change it and IMAGE_SIZE stops matching the GPT
+# layout, and sysupgrade will write out of range.
+CONFIG_TARGET_ROOTFS_PARTSIZE=448
+
+# --- ccache ---
+# The whole point of running this in CI. When only a line of the DTS changes,
+# already-compiled units are reused and the build drops from hours to minutes.
+# The workflow handles saving/restoring the cache directory.
+CONFIG_CCACHE=y
+
+# --- LuCI web UI ---
+# `luci` is a metapackage: it pulls in luci-base, luci-mod-admin-full,
+# luci-mod-network/-status/-system, luci-app-firewall,
+# luci-app-package-manager and luci-theme-bootstrap.
+CONFIG_PACKAGE_luci=y
+
+# uhttpd + px5g, i.e. the web server and a self-signed cert -> HTTPS on 443.
+CONFIG_PACKAGE_luci-ssl=y
+
+# --- LuCI UI language: Simplified Chinese ---
+# GOTCHA (measured, not guessed): writing
+#     CONFIG_PACKAGE_luci-i18n-base-zh-cn=y
+# alone does NOT work -- `make defconfig` silently drops it. LuCI generates
+# those symbols with
+#     default LUCI_LANG_zh_Hans||(ALL&&m)
+# so the language switch below is what actually selects the translation
+# packages. Switching it on pulls in luci-i18n-base-zh-cn,
+# luci-i18n-firewall-zh-cn and luci-i18n-package-manager-zh-cn automatically.
+CONFIG_LUCI_LANG_zh_Hans=y
+
+# --- on-device apk repository list ---
+# CONFIG_PER_FEED_REPO=y makes each feed a separate repository entry under
+# /etc/apk/repositories.d/. With the FEED_* switches off (the default when the
+# seed does not mention them), a freshly flashed box has no package sources at
+# all and `apk add` cannot fetch anything. Turn them on so extra packages
+# (e.g. luci-app-ttyd) can still be installed after flashing.
+CONFIG_PER_FEED_REPO=y
+CONFIG_FEED_packages=y
+CONFIG_FEED_luci=y
+CONFIG_FEED_routing=y
+CONFIG_FEED_telephony=y
+CONFIG_FEED_video=y
+
+# ============================================================================
+#  Keep the block below in sync with REQUIRED_CONF in build/build-ags21.sh.
+#  Two places, same list -- change one, change the other.
+# ============================================================================
+
+# --- WireGuard ---
+# All from the official feeds. luci-proto-wireguard renders its config QR code
+# client-side (luci-lib-uqr), so qrencode is NOT needed.
+CONFIG_PACKAGE_kmod-wireguard=y
+CONFIG_PACKAGE_wireguard-tools=y
+CONFIG_PACKAGE_luci-proto-wireguard=y
+# NOTE: there is deliberately NO luci-i18n-wireguard-zh-cn line here. That
+#   symbol does not exist: the official luci-proto-wireguard ships no po/
+#   directory, so no i18n package is generated for it, and writing the line
+#   would just make defconfig drop it silently. WireGuard's Chinese strings
+#   come from luci-base's base.po (domain "base"), which the zh_Hans switch
+#   already selects. build-ags21.sh re-reads .config right after defconfig and
+#   aborts if any REQUIRED_CONF entry went missing, so mistakes like this are
+#   caught at configure time instead of after flashing.
+
+# --- ddns-go (NOT in the official feeds -- fetched by build/vendor.sh) ---
+# openwrt/packages only has ddns-scripts, which is a different thing entirely.
+# ddns-go + its LuCI frontend come from ImmortalWrt, pinned by commit in
+# build/vendor.sh. Both are copied into package/ before `make defconfig`, so
+# the symbols below resolve; if vendor.sh ever fails, defconfig would silently
+# drop these lines and the firmware would come out without the feature.
+CONFIG_PACKAGE_ddns-go=y
+CONFIG_PACKAGE_luci-app-ddns-go=y
+CONFIG_PACKAGE_luci-i18n-ddns-go-zh-cn=y
+
+# --- homeproxy (NOT in the official feeds -- fetched by build/vendor.sh) ---
+# Only the LuCI layer is vendored: sing-box itself IS in the official feeds
+# (net/sing-box, 1.12.x) and homeproxy's init script only needs /usr/bin/sing-box
+# plus the sing-box user (the official package sets USERID:=sing-box=5566).
+# chinadns-ng is NOT required -- its DNS splitting uses sing-box's own resolver
+# on 127.0.0.1 plus dnsmasq's nftset= directive. The device's dnsmasq 2.93 is
+# built with nftset, so dnsmasq-full is NOT needed either.
+CONFIG_PACKAGE_luci-app-homeproxy=y
+CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn=y
+CONFIG_PACKAGE_sing-box=y
+# Explicit even though luci-app-homeproxy already depends on them.
+CONFIG_PACKAGE_kmod-nft-tproxy=y
+CONFIG_PACKAGE_kmod-nft-socket=y
+CONFIG_PACKAGE_kmod-tun=y
+CONFIG_PACKAGE_kmod-inet-diag=y
+CONFIG_PACKAGE_firewall4=y
+CONFIG_PACKAGE_ucode-mod-digest=y
+# ucode-mod-math: homeproxy's root/etc/homeproxy/scripts/generate_client.uc does
+# `import { isnan } from 'math'` (line 11, actually used on line 177), yet the
+# upstream LUCI_DEPENDS only lists +ucode-mod-digest -- math is MISSING there.
+# It currently works only because luci-base pulls it in (luci-base's own
+# ucode/dispatcher.uc imports `rand` from math and declares +ucode-mod-math).
+# Pinning it here keeps that from being a coincidence: if luci-base ever stops
+# carrying it, homeproxy's client config generation dies with
+# "Unable to resolve module 'math'".
+CONFIG_PACKAGE_ucode-mod-math=y
+
+# --- sing-box build features (REQUIRED for homeproxy's server-side ACME) ---
+# The official feeds ship sing-box with ACME/DHCP as OPTIONAL tags that default
+# to off, whereas ImmortalWrt's own sing-box hard-codes with_acme,with_dhcp into
+# GO_PKG_TAGS. homeproxy's generate_server.uc emits an `acme: {...}` block for
+# automatic TLS certificates; without with_acme sing-box refuses to start as
+# soon as ACME is enabled (unknown field). Version note: official is 1.12.17 and
+# ImmortalWrt is 1.12.25 -- same 1.12.x series, compatible config format
+# (homeproxy's "leave for sing-box 1.13.0" comment confirms it targets 1.12.x),
+# so turning these tags on is enough; no need to swap the whole package.
+CONFIG_SINGBOX_WITH_ACME=y
+CONFIG_SINGBOX_WITH_DHCP=y
+
+# --- qrencode: command-line QR tool ---
+# NOTE: LuCI's WireGuard page renders its QR codes fully client-side via
+# luci-lib-uqr (micro QR, SVG), so qrencode is NOT needed for that. This adds
+# the /usr/bin/qrencode binary for scripts/terminal use. QRENCODE_PNG=y enables
+# `-o file.png` output (pulls in libpng); drop that line if PNG is not wanted --
+# qrencode still emits ANSI/UTF8/SVG without it.
+CONFIG_PACKAGE_libqrencode=y
+CONFIG_QRENCODE_PNG=y
+CONFIG_PACKAGE_qrencode=y
+
+# --- local package: CPU and temperature panels on the status overview page ---
+# Lives in packages/luci-app-ags21-dashboard/ in this repo. luci-mod-status
+# builds the overview page by listing
+# /www/luci-static/resources/view/status/include at runtime and rendering every
+# *.js it finds (sorted by file name), so this package just drops two files
+# there -- no LuCI source is patched:
+#   15_cpu_usage.js  CPU usage, between 10_system and 20_memory
+#   61_wifi_temp.js  temperatures, right after 60_wifi ("Wireless"); reads
+#                    /sys/class/hwmon (the two mt7915 radio chips + SoC)
+CONFIG_PACKAGE_luci-app-ags21-dashboard=y

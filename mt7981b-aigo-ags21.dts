@@ -1,0 +1,354 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+/*
+ * 爱国者 AIGO AGS21  (MT7981B + 1GB DDR4 + 64GB eMMC)
+ *
+ * 硬件数据全部来自实机提取，见 ags21_backup/dts/original_ags21.dts（688 行完整反编译）
+ * 与实测串口日志 ags21_openwrt/serial_boot.log。
+ *
+ * 放置位置：target/linux/mediatek/dts/mt7981b-aigo-ags21.dts
+ *
+ * 设计说明 —— 为什么是「单 DTS」而不是 base + overlay：
+ *   官方 RAX3000M 用 base dts + emmc/nand 两个 dtso，是因为同一份镜像要同时支持
+ *   eMMC 和 SPI-NAND 两种启动介质，U-Boot 按 bootconf 选 overlay。
+ *   AGS21 只有 eMMC 一种介质，所以这里把 mmc0 / 分区 / nvmem 全部写进主 dts，
+ *   生成的 FIT 只有一个配置节点 config-1，少一层不确定性。
+ *
+ *   代价：U-Boot 环境变量 bootconf 必须相应改掉（详见 build/README.md）。
+ *   官方镜像的 bootconf 是 "config-1#mt7981b-cmcc-rax3000m-emmc"，
+ *   本设备要设成 "config-1"。
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+#include <dt-bindings/pinctrl/mt65xx.h>
+
+#include "mt7981b.dtsi"
+
+/ {
+	model = "AIGO AGS21";
+	compatible = "aigo,ags21", "mediatek,mt7981";
+
+	aliases {
+		led-boot = &red_led;
+		led-failsafe = &red_led;
+		led-running = &green_led;
+		led-upgrade = &green_led;
+		serial0 = &uart0;
+	};
+
+	chosen: chosen {
+		bootargs-override = "root=/dev/fit0 rootwait";
+		stdout-path = "serial0:115200n8";
+		/* fitblk 只认这里指向的分区里装的 FIT；官方 emmc.dtso 里就是这一句 */
+		rootdisk = <&emmc_rootdisk>;
+	};
+
+	memory@40000000 {
+		device_type = "memory";
+		/* 实机 1 GB DDR4。切勿照抄 RAX3000M 的 0x20000000(512MB) */
+		reg = <0 0x40000000 0 0x40000000>;
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		button-reset {
+			label = "reset";
+			linux,code = <KEY_RESTART>;
+			/* 原厂 <&pio 1 GPIO_ACTIVE_LOW> */
+			gpios = <&pio 1 GPIO_ACTIVE_LOW>;
+		};
+
+		button-wps {
+			label = "wps";
+			linux,code = <KEY_WPS_BUTTON>;
+			/* 原厂 <&pio 0 (flags=0)> = ACTIVE_HIGH；
+			 * 注意与 RAX3000M 的 mesh 键(GPIO_ACTIVE_LOW)极性相反 */
+			gpios = <&pio 0 GPIO_ACTIVE_HIGH>;
+		};
+	};
+
+	gpio-leds {
+		compatible = "gpio-leds";
+
+		/* 原厂三个灯全部 ACTIVE_LOW */
+		green_led: led-0 {
+			function = LED_FUNCTION_STATUS;
+			color = <LED_COLOR_ID_GREEN>;
+			gpios = <&pio 4 GPIO_ACTIVE_LOW>;
+		};
+
+		red_led: led-1 {
+			function = LED_FUNCTION_STATUS;
+			color = <LED_COLOR_ID_RED>;
+			gpios = <&pio 6 GPIO_ACTIVE_LOW>;
+			/* 原厂 default-state = "on"，正好当 boot 指示 */
+			default-state = "on";
+		};
+
+		led-2 {
+			function = LED_FUNCTION_WAN;
+			color = <LED_COLOR_ID_GREEN>;
+			gpios = <&pio 29 GPIO_ACTIVE_LOW>;
+		};
+	};
+};
+
+&eth {
+	status = "okay";
+
+	/* gmac0 -> MT7531 的 CPU 口，2500base-x 内部固定链路 */
+	gmac0: mac@0 {
+		compatible = "mediatek,eth-mac";
+		reg = <0>;
+		phy-mode = "2500base-x";
+		nvmem-cells = <&macaddr_factory_2a 0>;
+		nvmem-cell-names = "mac-address";
+
+		fixed-link {
+			speed = <2500>;
+			full-duplex;
+			pause;
+		};
+	};
+
+	/* gmac1 -> SoC 内置 GbE PHY = WAN（同官方 RAX3000M）
+	 *
+	 * factory 分区实测布局（与官方 emmc.dtso 的 nvmem 映射一字不差，
+	 * 所以换系统后 MAC 不会变随机）：
+	 *   （本仓库是公开的，下面把 MAC 正文打码，只保留偏移与用途的对应关系；
+	 *     dts 本身只引用 0x24 / 0x2a 两个偏移，不依赖这里的字面值。）
+	 *   0x04 = xx:xx:xx:xx:xx:X2  机身标签
+	 *   0x24 = xx:xx:xx:xx:xx:X0  WAN  -> gmac1
+	 *   0x2a = xx:xx:xx:xx:xx:X1  LAN  -> gmac0
+	 *   0x30 = xx:xx:xx:xx:xx:X3  5G
+	 *   X0..X3 是厂商预置的连续四个 MAC（X0 为基准，就放在 0x24）：
+	 *   机身标签 = X2、WAN = X0、LAN = X1、5G = X3。
+	 *
+	 * 这里刻意不写 openwrt,netdev-name，保持网卡名 eth0/eth1，
+	 * 这样 02_network 可以直接写 "eth1" 当 wan（与官方一致）。
+	 */
+	gmac1: mac@1 {
+		compatible = "mediatek,eth-mac";
+		reg = <1>;
+		phy-mode = "gmii";
+		nvmem-cells = <&macaddr_factory_24 0>;
+		nvmem-cell-names = "mac-address";
+		phy-handle = <&int_gbe_phy>;
+	};
+};
+
+&mdio_bus {
+	switch: switch@1f {
+		compatible = "mediatek,mt7531";
+		reg = <31>;
+		reset-gpios = <&pio 39 GPIO_ACTIVE_HIGH>;
+		/* 原厂 DTS 未给 switch 配中断 -> AGS21 上 MT7531 的 INT 可能没接，
+		 * 所以这里也刻意不声明 interrupt-controller，与厂商一致。
+		 * 若实测 GPIO38 有中断，再补：
+		 *   interrupt-controller;
+		 *   #interrupt-cells = <1>;
+		 *   interrupt-parent = <&pio>;
+		 *   interrupts = <38 IRQ_TYPE_LEVEL_HIGH>;
+		 */
+	};
+};
+
+&switch {
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* 网口命名 —— 已实测定稿（2026-10-13）
+		 *
+		 * 机身只有 1 个 WAN + 2 个 LAN，面板丝印是 WAN / LAN1 / LAN2。
+		 * 命名原则：网卡名对齐面板丝印。上游同芯片的 rax3000m 就是这么做的 ——
+		 * 它的 dts 里 port@0/1/2 故意写成 lan3/lan2/lan1，说明「label 要和丝印对上」
+		 * 才是约定，「label = PHY 号 + 1」不是。
+		 *
+		 *   * WAN  = gmac1 + SoC 内置 GbE PHY（mdio 地址 0），网卡名 eth1。
+		 *     本机刻意不给 gmac1 加 label，保持 eth1，与官方 RAX3000M 一致。
+		 *     （改名机制是 filogic 的 lib/preinit/04_set_netdev_label：给 gmac 节点
+		 *      加 label 或 openwrt,netdev-name 就会 ip link set 改名，本机不用。）
+		 *   * LAN1 = 面板 LAN1 = MT7531 PHY1 = 下面 port@1
+		 *   * LAN2 = 面板 LAN2 = MT7531 PHY2 = 下面 port@2
+		 *
+		 * 实测证据（可复现）：
+		 *   第一版固件的 label 是「reg + 1」（lan1..lan4 = PHY0..PHY3），
+		 *   轮询 /sys/class/net 下各网口的 carrier 依次插线：
+		 *     12:07 lan2(PHY1) 亮，12:08 lan3(PHY2) 亮，lan1(PHY0)/lan4(PHY3) 全程 0
+		 *     dmesg: lan2 (uninitialized): PHY [mt7530-0:01]
+		 *            lan3 (uninitialized): PHY [mt7530-0:02]
+		 *   ⇒ 两个活口就是 MT7531 的 PHY1 / PHY2（DSA 用户口与 PHY 一一对应）。
+		 *   再把网线插到面板 LAN1 口（当时 label 还是 lan2/lan3）：
+		 *     亮起的是 lan2 = PHY1  →  面板 LAN1 就是 PHY1
+		 *     dmesg: mdio-bus:1f lan2: Link is Up - 10Mbps/Full → 1Gbps/Full
+		 *   ⇒ 面板 LAN1/LAN2 与 PHY1/PHY2 同序 ⇒ 是「整体减一」的改名，不是对调。
+		 *
+		 * 两个坑，别再踩：
+		 *   1. 原厂 /etc/board.d/02_network 兜底分支写的是 "lan4 lan3 lan2" + iptv_port，
+		 *      那是 MTK 参考板（mediatek,mt7981-emmc-rfb）的通用值，照抄会把不存在
+		 *      的口桥进 br-lan。本机的对口定义在 build/build-ags21.sh 的 02_network
+		 *      补丁里，改名时两边必须一起改。
+		 *      另外 /etc/config/network 只在「不存在或为空」时由 board.d 生成
+		 *      （见 bin/config_generate 末尾的 if [ ! -s /etc/config/network ]），
+		 *      所以升级时保留下来的 ports='lan2' 'lan3' 不会自动跟着改名，
+		 *      由随固件带的 /etc/uci-defaults/99-ags21-port-rename 迁移。
+		 *   2. mdio 总线上只有 mt7530-0:00..03 四个 PHY，没有 2.5G PHY 芯片 ——
+		 *      官方 RAX3000M 那颗 airoha,an8855 在本机不存在，所以本机没有 2.5G 口。
+		 */
+		port@1 {
+			reg = <1>;
+			label = "lan1";
+		};
+
+		port@2 {
+			reg = <2>;
+			label = "lan2";
+		};
+
+		/* CPU 口 */
+		port@6 {
+			reg = <6>;
+			ethernet = <&gmac0>;
+			phy-mode = "2500base-x";
+
+			fixed-link {
+				speed = <2500>;
+				full-duplex;
+				pause;
+			};
+		};
+	};
+};
+
+&mmc0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	bus-width = <8>;
+	/* 第一版固件沿用官方 RAX3000M 的保守值，先保证一定能起来。
+	 * 原厂 dts 用的是 0x632EA00 = 104 MHz（配 cap-mmc-highspeed +
+	 * mmc-hs200-1_8v + 自己的 drive-strength/pull-up 引脚配置）。
+	 * 等第一版启动验证通过，再把这里改成 104000000 复测。
+	 */
+	max-frequency = <26000000>;
+	no-sd;
+	no-sdio;
+	non-removable;
+	pinctrl-names = "default", "state_uhs";
+	pinctrl-0 = <&mmc0_pins_default>;
+	pinctrl-1 = <&mmc0_pins_uhs>;
+	/* 这一行不能少！
+	 * 缺了它 mtk-sd 就用驱动里那套默认 ocr_avail(2.8~3.3V)，而 eMMC 报的是
+	 * 3.3~3.4V，mmc_select_voltage() 交集为空 -> 内核直接打
+	 *   mtk-msdc 11230000.mmc: no support for card's volts
+	 *   mmc0: error -22 whilst initialising MMC card
+	 *   mmc0: Failed to initialize a non-removable card
+	 * 然后 rootfs 永远挂不上（Waiting for root device /dev/fit0）。
+	 * 第一版固件就是漏了这行，实机实测到上述报错。官方 emmc.dtso 的
+	 * fragment@3 里同样有 vmmc-supply = <&reg_3p3v>。
+	 * reg_3p3v 由补丁 117 的 mt7981b.dtsi 提供（3.3V fixed regulator）。
+	 */
+	vmmc-supply = <&reg_3p3v>;
+	status = "okay";
+
+	card@0 {
+		compatible = "mmc-card";
+		reg = <0>;
+
+		block {
+			compatible = "block-device";
+
+			partitions {
+				/* WiFi 校准 EEPROM：实机位于 factory 分区偏移 0，
+				 * 首 4 字节 81 79 00 00 = 小端 0x00007981 = MT7981，
+				 * 标准 MTK EEPROM 头。位置与 RAX3000M 完全相同，
+				 * 所以换 mt76 驱动后 WiFi 能直接跑，不用改 EEPROM 来源。
+				 */
+				block-partition-factory {
+					partname = "factory";
+
+					nvmem-layout {
+						compatible = "fixed-layout";
+						#address-cells = <1>;
+						#size-cells = <1>;
+
+						eeprom_factory_0: eeprom@0 {
+							reg = <0x0 0x1000>;
+						};
+
+						macaddr_factory_24: macaddr@24 {
+							compatible = "mac-base";
+							reg = <0x24 0x6>;
+							#nvmem-cell-cells = <1>;
+						};
+
+						macaddr_factory_2a: macaddr@2a {
+							compatible = "mac-base";
+							reg = <0x2a 0x6>;
+							#nvmem-cell-cells = <1>;
+						};
+					};
+				};
+
+				/* 内核把 /dev/fit0 映射到这个分区里装的 FIT */
+				emmc_rootdisk: block-partition-production {
+					partname = "production";
+				};
+			};
+		};
+	};
+};
+
+&pio {
+	mmc0_pins_default: mmc0-pins {
+		mux {
+			function = "flash";
+			groups = "emmc_45";
+		};
+	};
+
+	mmc0_pins_uhs: mmc0-uhs-pins {
+		mux {
+			function = "flash";
+			groups = "emmc_45";
+		};
+	};
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&usb_phy {
+	status = "okay";
+};
+
+&watchdog {
+	status = "okay";
+};
+
+&wifi {
+	status = "okay";
+	nvmem-cells = <&eeprom_factory_0>;
+	nvmem-cell-names = "eeprom";
+};
+
+&xhci {
+	status = "okay";
+};
+
+/* ------------------------------------------------------------------
+ * 待实测确认后调整的项（都不影响第一版能否启动）
+ *
+ * 1. LAN 口：**已定稿** —— 只留 port@1(lan2) / port@2(lan3)，两个口都插线实测过
+ *    （证据见上面 &switch 节点的注释）。
+ * 2. eMMC 频率：26000000 -> 104000000（原厂值），并考虑补上原厂的
+ *    drive-strength / pull-up 引脚配置（conf-cmd-dat / conf-clk / conf-rst）。
+ * 3. MT7531 中断：确认 GPIO38 是否已焊，决定是否启用 interrupt-controller。
+ * 4. 可选：把 production 分区从 448 MiB 放大，用上尾部闲置的约 57 GB
+ *    （官方 GPT 的 LastUsable 只到 LBA 1048575 = 512 MiB）。
+ * ------------------------------------------------------------------ */

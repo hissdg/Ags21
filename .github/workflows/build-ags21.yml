@@ -1,0 +1,137 @@
+name: Build AGS21 OpenWrt
+
+# 默认只在手动点按钮时跑。
+# 编译一次 1-3 小时、吃配额，不要一 push 就自动编。
+# 想让它打 tag 时自动出包：把下面 push 段的注释去掉。
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: '构建阶段'
+        required: true
+        default: all
+        type: choice
+        options:
+          - all    # 完整编译，出 sysupgrade.itb
+          - dtb    # 只验设备树（分钟级，不编内核）
+          - sync   # 只拉源码 + 打补丁，验证补丁还能干净应用
+  # push:
+  #   tags: ['v*']
+
+# 编译很贵：不并发跑两份，也不因为新提交把正在跑的掐掉
+concurrency:
+  group: ags21-build
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # 建 Release 需要；如果只用 workflow_dispatch，可降成 read
+
+env:
+  OWRT_VERSION: v25.12.5
+  # 源码树必须放在 Linux 原生文件系统里，不能是 /mnt/... （大小写敏感、符号链接、9p 性能三个坑）
+  AGS21_WORKDIR: ${{ github.workspace }}/openwrt-ags21
+
+jobs:
+  build:
+    # 与本地 WSL 的 Ubuntu 24.04 对齐 —— 环境一致，CI 过了本地就没理由不过
+    runs-on: ubuntu-24.04
+    # GitHub 单 job 硬上限 360 分钟，留 10 分钟给上传产物和存缓存
+    timeout-minutes: 350
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v7
+
+      - name: 腾出磁盘空间
+        # runner 根分区默认只剩 ~20 GB，而完整编译要 20-25 GB，不清一定中途 ENOSPC。
+        # 下面删的都是 runner 预装、但编 OpenWrt 用不到的 SDK。
+        run: |
+          set -x
+          df -h /
+          sudo rm -rf /usr/share/dotnet \
+                      /usr/local/lib/android \
+                      /opt/ghc \
+                      /usr/local/.ghcup \
+                      /usr/local/share/boost \
+                      /opt/hostedtoolcache/CodeQL \
+                      /usr/local/lib/node_modules
+          docker image prune -af || true
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile || true
+          sudo apt-get clean
+          df -h /
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc-multilib g++-multilib \
+            ccache clang flex bison gawk gettext git perl \
+            libncurses-dev libssl-dev libelf-dev \
+            python3 python3-setuptools \
+            rsync swig unzip zlib1g-dev file wget subversion \
+            device-tree-compiler
+          ccache --version | head -1
+          dtc --version
+
+      - name: 恢复缓存（ccache + dl）
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.ccache
+            ${{ env.AGS21_WORKDIR }}/dl
+          # key 只按 OpenWrt 版本区分，刻意不掺 dts / config 的哈希：
+          # ccache 自己会按编译单元的内容哈希判断命中，把 dts 哈希塞进 key
+          # 会让「只改一行 dts」也整份丢缓存，反而更慢。
+          # 这里用 run_id 做 key，是为了让每次都能存回一份新缓存（滚动更新），
+          # 真正命中的是下面 restore-keys 的前缀匹配。
+          key: ags21-${{ env.OWRT_VERSION }}-${{ github.run_id }}
+          restore-keys: |
+            ags21-${{ env.OWRT_VERSION }}-
+
+      - name: 构建
+        env:
+          STAGE: ${{ inputs.stage || 'all' }}
+        run: |
+          # ccache 4.x 的默认目录是 ~/.cache/ccache，必须显式指到 ~/.ccache，
+          # 才能和上面 cache 步骤的 path 对上（对不上就是每轮白编）。
+          export CCACHE_DIR="$HOME/.ccache"
+          export CCACHE_MAXSIZE=2G
+          export CCACHE_COMPRESS=true
+          mkdir -p "$CCACHE_DIR"
+          bash ci/ci-build.sh "--$STAGE"
+
+      - name: 保存缓存（ccache + dl）
+        # always()：编译失败也要存 —— 已经编好的那部分留着，下次接着用
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.ccache
+            ${{ env.AGS21_WORKDIR }}/dl
+          key: ags21-${{ env.OWRT_VERSION }}-${{ github.run_id }}
+
+      - name: 上传固件
+        # always()：即使自检那步失败了，产物一般也已经生成，传上去方便本地排查
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ags21-openwrt-${{ env.OWRT_VERSION }}
+          retention-days: 90
+          if-no-files-found: warn
+          path: |
+            ${{ env.AGS21_WORKDIR }}/bin/targets/mediatek/filogic/*aigo_ags21*.itb
+            ${{ env.AGS21_WORKDIR }}/bin/targets/mediatek/filogic/*aigo_ags21*.manifest
+            ${{ env.AGS21_WORKDIR }}/bin/targets/mediatek/filogic/sha256sums
+            ${{ env.AGS21_WORKDIR }}/bin/targets/mediatek/filogic/config.buildinfo
+            ags21-build.log
+
+      - name: 建 Release（只在打 tag 时）
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "AGS21 OpenWrt $GITHUB_REF_NAME" \
+            --generate-notes \
+            "$AGS21_WORKDIR"/bin/targets/mediatek/filogic/*aigo_ags21*.itb

@@ -1,0 +1,83 @@
+#!/bin/sh
+# ============================================================================
+#  AGS21：LAN 口改名后的一次性配置迁移
+#  装机位置：/etc/uci-defaults/99-ags21-port-rename
+#  执行时机：/etc/init.d/boot 在 S10boot 阶段执行 /etc/uci-defaults/* ，
+#            早于 S20network 起网，所以迁移结果能赶上这一次开机就生效。
+#            （机制：boot() 里 `cd /etc/uci-defaults` 后逐个 `. ./$file`，
+#              返回 0 的记进 applied，最后 uci commit + rm -f $applied，
+#              于是升级后新出现的脚本只会跑一次。）
+#
+#  为什么需要这个脚本：
+#    dts 里两个用户口的 label 从 lan2/lan3 改成了 lan1/lan2（对齐面板丝印）。
+#    但 /etc/config/network 只在「不存在或为空」时才由 board.d + bin/config_generate
+#    生成（config_generate 末尾就是 `if [ ! -s /etc/config/network ]`），
+#    而升级时配置是保留下来的 —— 于是 br-lan 的 ports 还写着 lan2/lan3。
+#    改名后 lan3 已经不存在了，br-lan 会去桥一个不存在的接口，对应的 LAN 口失效。
+#
+#  映射（与 mt7981b-aigo-ags21.dts 的 port@1/port@2 严格对应）：
+#        旧 lan2 = MT7531 PHY1 = 面板 LAN1 = 新 lan1
+#        旧 lan3 = MT7531 PHY2 = 面板 LAN2 = 新 lan2
+#        其他名字（eth1、无线口、用户自定义）一律原样不动
+#
+#  幂等：没有旧名字就什么都不做，重复执行无副作用。
+# ============================================================================
+
+[ -e /etc/config/network ] || exit 0
+
+tmp="$(mktemp)" || exit 0
+uci -q show network | sed -n 's/^\(network\.[^=]*\)\.ports=.*/\1/p' | sort -u > "$tmp"
+
+changed=0
+while IFS= read -r sec; do
+	[ -n "$sec" ] || continue
+
+	old="$(uci -q get "$sec.ports" 2>/dev/null)"
+	[ -n "$old" ] || continue
+
+	# 只在「旧命名空间」里迁移。判据是 lan3 —— 它只存在于改名前的命名空间
+	# （改名后只剩 lan1/lan2）。必须有这个判据，否则不幂等：
+	#   lan2->lan1 与 lan3->lan2 是一组，第二次执行会把新的 lan2 又改成 lan1，
+	#   'lan1 lan2' 变成 'lan1 lan1'；全新安装（board.d 直接生成 lan1/lan2）
+	#   也会被误改。这一段是实测踩出来的（拿配置副本干跑发现的），别删。
+	case " $old " in
+		*lan3*) ;;
+		*) continue ;;
+	esac
+
+	# 整体一次性重映射（不能逐条改名：lan2->lan1 和 lan3->lan2 之间会撞名）。
+	# 口名可能带 ":u*" 这种 VLAN 标志后缀（config bridge-vlan 的 ports 就是这样），
+	# 所以只换冒号前面的部分，后缀原样保留。
+	new=""
+	for p in $old; do
+		case "$p" in
+			*:*) base="${p%%:*}"; flags=":${p#*:}" ;;
+			*)   base="$p";      flags="" ;;
+		esac
+		case "$base" in
+			lan2) base="lan1" ;;
+			lan3) base="lan2" ;;
+		esac
+		new="$new $base$flags"
+	done
+	new="${new# }"
+
+	# 没有旧名字（例如全新安装走 board.d 生成的就是新名字）→ 不动
+	[ "$new" = "$old" ] && continue
+
+	uci -q delete "$sec.ports"
+	for p in $new; do
+		uci -q add_list "$sec.ports=$p"
+	done
+	changed=1
+
+	echo "ags21-port-rename: $sec.ports: '$old' -> '$new'"
+	logger -t ags21-port-rename "$sec.ports: '$old' -> '$new'" 2>/dev/null
+done < "$tmp"
+rm -f "$tmp"
+
+if [ "$changed" = "1" ]; then
+	uci -q commit network || exit 1
+fi
+
+exit 0

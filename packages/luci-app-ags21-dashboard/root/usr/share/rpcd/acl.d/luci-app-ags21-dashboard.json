@@ -1,0 +1,16 @@
+{
+	"luci-app-ags21-dashboard": {
+		"description": "Grant the reads used by the AGS21 status overview extension (injected into luci-mod-status 10_system.js): /proc/stat for the CPU usage row, and /sys/class/hwmon for the temperature row. Temperature is read from hwmon rather than thermal zones because on the MT7981+MT7915 AGS21 the two radio chip junctions only exist as hwmon (mt7915_phy0 / mt7915_phy1); the SoC one shows up as hwmon cpu_thermal. The `/sys/class/hwmon/*` glob is enough for the dynamically numbered hwmonN directories because rpcd matches with fnmatch(FNM_NOESCAPE) - no FNM_PATHNAME, so `*` also crosses `/`.",
+		"read": {
+			"ubus": {
+				"file": [ "read", "list", "stat" ]
+			},
+			"file": {
+				"/proc/stat": [ "read" ],
+
+				"/sys/class/hwmon": [ "list" ],
+				"/sys/class/hwmon/*": [ "list", "read" ]
+			}
+		}
+	}
+}

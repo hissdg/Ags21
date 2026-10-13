@@ -1,0 +1,49 @@
+# ============================================================================
+#  AIGO AGS21 —— OpenWrt 25.12.5 设备定义
+#
+#  把这个文件的内容追加到：
+#      target/linux/mediatek/image/filogic.mk
+#
+#  结构完全参照同文件的 Device/cmcc_rax3000m，只改 DTS 名与厂家信息，
+#  因为 AGS21 与 RAX3000M eMMC DDR4 版是同 SoC + 同 DDR + 同 eMMC 方案。
+#
+#  刻意不做的两件事：
+#    1) 不写 ARTIFACTS 里的 preloader/fip
+#       —— 官方 cmcc_rax3000m-emmc-ddr4 的 BL2/fip 已经刷进设备并且实测
+#          能识别 1GB DDR4（串口打印 "EMI: Detected DRAM size: 1024MB"），
+#          重建 U-Boot 只会增加编译时间和刷机风险，没必要。
+#          若哪天真要重建，照 rax3000m 那段加：
+#            ARTIFACTS += emmc-ddr4-bl31-uboot.fip emmc-ddr4-preloader.bin
+#            ARTIFACT/emmc-ddr4-bl31-uboot.fip := mt7981-bl31-uboot cmcc_rax3000m-emmc-ddr4
+#            ARTIFACT/emmc-ddr4-preloader.bin  := mt7981-bl2 emmc-ddr4
+#    2) 不写 DEVICE_DTS_OVERLAY
+#       —— AGS21 只有 eMMC 一种启动介质，mmc0/分区/nvmem 全在主 dts 里，
+#          FIT 只有一个配置节点 config-1（详见 dts 头部注释）。
+#
+#  注意：本设备没进上述两条 ARTIFACTS 之后，产生的 sysupgrade.itb 里
+#        FIT 配置名为 "config-1"，U-Boot 的 bootconf 必须相应设置。
+# ============================================================================
+
+define Device/aigo_ags21
+  DEVICE_VENDOR := AIGO
+  DEVICE_MODEL := AGS21
+  DEVICE_DTS := mt7981b-aigo-ags21
+  DEVICE_DTS_DIR := ../dts
+  DEVICE_DTC_FLAGS := --pad 4096
+  DEVICE_DTS_LOADADDR := 0x43f00000
+  DEVICE_PACKAGES := kmod-mt7915e kmod-mt7981-firmware mt7981-wo-firmware kmod-usb3 \
+	e2fsprogs f2fsck mkf2fs
+  KERNEL_LOADADDR := 0x44000000
+  KERNEL := kernel-bin | gzip
+  KERNEL_INITRAMFS := kernel-bin | lzma | \
+	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 64k
+  KERNEL_INITRAMFS_SUFFIX := -recovery.itb
+  IMAGES := sysupgrade.itb
+  IMAGE_SIZE := $$(shell expr 64 + $$(CONFIG_TARGET_ROOTFS_PARTSIZE))m
+  IMAGE/sysupgrade.itb := append-kernel | \
+	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | \
+	pad-rootfs | append-metadata
+  ARTIFACTS := emmc-gpt.bin
+  ARTIFACT/emmc-gpt.bin := mt798x-gpt emmc
+endef
+TARGET_DEVICES += aigo_ags21

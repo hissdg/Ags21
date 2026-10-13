@@ -1,0 +1,91 @@
+#!/bin/sh
+# ============================================================================
+#  AGS21：让编出来的固件「不保留配置刷完，无线默认就是开的」
+#  装机位置：/etc/board.d/04-ags21-wifi-defaults
+# ============================================================================
+#
+#  ── 不改它会怎样（根因，设备上实测）────────────────────────────────────
+#
+#  OpenWrt 25.x 的默认无线配置不是写死在文件里的，而是由
+#  /lib/wifi/mac80211.uc 在开机时**生成** uci 语句。它的结尾是这三行：
+#
+#      set ${si}.ssid='${defaults?.ssid || "OpenWrt"}'
+#      set ${si}.encryption='${defaults?.encryption || encryption}'
+#      set ${si}.disabled='${defaults ? 0 : 1}'        <-- 就是这里
+#
+#  其中 defaults 来自 /etc/board.json 的 wlan.defaults.ssids.<band>：
+#
+#      defaults = board.wlan.defaults.ssids?.[band_name]?.ssid
+#                 ? board.wlan.defaults.ssids?.[band_name]
+#                 : board.wlan.defaults.ssids?.all;
+#      country  = board.wlan.defaults.country;
+#      if (!country && band_name != '2g')
+#              defaults = null;               <-- 5G 没国家码就直接作废
+#
+#  AGS21 的 board.json 里只有 wlan.phy0/phy1 的 **硬件能力**（band/channel/
+#  htmode），没有任何 wlan.defaults ⇒ defaults 为空 ⇒ 生成的
+#  /etc/config/wireless 里两个 wifi-iface 都带 `disabled '1'`。
+#
+#  后果：每次「不保留配置」刷机后无线都是关的，必须进 LuCI 手动开一次。
+#  （2026-10-13 设备实测：重置后 ssid 回到 'OpenWrt'、encryption 'none'、
+#    default_radio0/1 都是 disabled '1'。）
+#
+#  ── 为什么补在 board.d，而不是 /etc/uci-defaults ──────────────────────
+#
+#  执行顺序（/bin/config_generate 第 8 行 → /bin/board_detect）：
+#
+#      board_detect  →  (. /etc/board.d/*)  产出 /etc/board.json
+#      config_generate → 生成 /etc/config/network（以及 system 等）
+#      之后 wifi 服务起来 → mac80211.uc 读 board.json 才生成 /etc/config/wireless
+#
+#  也就是说 board.json 是**因**、/etc/config/wireless 是**果**。
+#  而 /etc/uci-defaults/* 跑在更早的 /etc/init.d/boot 里，那时
+#  /etc/config/wireless 还不存在，uci set 写在空气上 —— 顺序不可靠。
+#  所以必须在 board.d 这一层补 wlan.defaults。
+#
+#  ── 为什么 5G 那行 country 不是可选项 ────────────────────────────────
+#
+#  见上面 mac80211.uc 的第 4 段：没有 country 时 band_name != '2g' 的
+#  defaults 会被置 null ⇒ 5G 依旧 disabled '1'、ssid 退回 'OpenWrt'。
+#  所以 ucidef_set_country 是**功能必需**，不是装饰。CN 同时也能让
+#  驱动加载正确的 regulatory 域。
+#
+#  ── 用的是 OpenWrt 原样默认值：SSID 'OpenWrt'、不加密、无密码 ────────
+#
+#  2026-10-13 用户明确要求「无线打开就行，用 OpenWrt 的默认设置、无密码」，
+#  所以这里**不设 key、不给 psk2** —— 生成出来就是上游那套开着的
+#  `ssid 'OpenWrt'` + `encryption 'none'`，唯一多出来的只有 country CN。
+#  （本文件早先一版曾按 AGS21-2G/AGS21-5G + psk2/<口令> 写，已按要求撤掉。）
+#  想换成加密网络：把 encryption / key 补进下面两行即可（改完必须重新编译）。
+#
+#  ── 为什么要 board_name 分支 ────────────────────────────────────────
+#
+#  本文件装在 target/linux/mediatek/filogic/base-files/ 下，会被**所有**
+#  filogic 设备共用（base-files 是整棵子树共享的）。不加分支会污染
+#  cmcc,rax3000m 等别的机型。
+#
+#  ── 幂等性 ─────────────────────────────────────────────────────────
+#
+#  board_detect 只在 /etc/board.json 不存在（[ ! -s ]）时才跑 board.d，
+#  所以只影响全新安装 / 不保留配置的重置；保留配置升级时老配置原样保留。
+#  ============================================================================
+
+. /lib/functions/uci-defaults.sh
+
+board=$(board_name)
+
+board_config_update
+
+case "$board" in
+aigo,ags21)
+	# 第 3 个参数是 encryption、第 4 个是 key —— 这里只给到 ssid，
+	# 让 encryption 落回 mac80211.uc 的默认 'none'，即无密码开放网络。
+	ucidef_set_wireless 2g "OpenWrt"
+	ucidef_set_wireless 5g "OpenWrt"
+	ucidef_set_country CN
+	;;
+esac
+
+board_config_flush
+
+exit 0
