@@ -616,8 +616,8 @@ REQUIRED_CONF=(
 	# 版本说明：官方 feed 是 1.12.17、ImmortalWrt 是 1.12.25，同属 1.12.x，
 	#   配置格式兼容（homeproxy 里那句「leave for sing-box 1.13.0」的注释正说明
 	#   它当前面向 1.12.x），所以只需补齐缺失的 tag，不必换整包。
-	'CONFIG_SINGBOX_WITH_ACME=y'
-	'CONFIG_SINGBOX_WITH_DHCP=y'
+	# 'CONFIG_SINGBOX_WITH_ACME=y'
+	# 'CONFIG_SINGBOX_WITH_DHCP=y'
 	# ---- qrencode：命令行二维码工具 ----
 	# 注意：LuCI 的 WireGuard 界面二维码是纯前端的 luci-lib-uqr（µQR，生成 SVG），
 	#   本来就**不需要** qrencode。这里装的是命令行 /usr/bin/qrencode，给脚本/终端用，
