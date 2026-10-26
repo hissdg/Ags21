@@ -580,17 +580,19 @@ REQUIRED_CONF=(
 	#   defconfig 会把这个未知符号静默丢掉（现在下面的回读校验会抓到这种）。
 	#   WireGuard 界面的中文来自 luci-base 的 base.po（域名 base），无需独立翻译包。
 	# ---- 应用：ddns-go（官方 feed 没有，见 vendor.sh）----
-	'CONFIG_PACKAGE_ddns-go=y'
-	'CONFIG_PACKAGE_luci-app-ddns-go=y'
-	'CONFIG_PACKAGE_luci-i18n-ddns-go-zh-cn=y'
+	# 'CONFIG_PACKAGE_ddns-go=y'
+	# 'CONFIG_PACKAGE_luci-app-ddns-go=y'
+	# 'CONFIG_PACKAGE_luci-i18n-ddns-go-zh-cn=y'
 	# ---- 应用：homeproxy（官方 feed 没有，见 vendor.sh）----
 	# homeproxy 的 LUCI_DEPENDS 里已经声明了 sing-box / firewall4 /
 	# kmod-nft-tproxy / ucode-mod-digest，下面这些是显式再写一遍：
 	# 一来让人一眼看清固件里到底塞了什么，二来防上游改依赖时我们不知不觉掉功能。
 	# sing-box 走官方 feed（1.12.x），homeproxy 只需要它提供 /usr/bin/sing-box。
-	'CONFIG_PACKAGE_luci-app-homeproxy=y'
-	'CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn=y'
-	'CONFIG_PACKAGE_sing-box=y'
+	# 'CONFIG_PACKAGE_luci-app-homeproxy=y'
+	# 'CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn=y'
+	# 'CONFIG_PACKAGE_sing-box=y'
+	'CONFIG_PACKAGE_luci-app-upnp=y'
+	'CONFIG_PACKAGE_luci-app-openclash=y'
 	'CONFIG_PACKAGE_kmod-nft-tproxy=y'
 	'CONFIG_PACKAGE_kmod-nft-socket=y'
 	'CONFIG_PACKAGE_kmod-tun=y'
