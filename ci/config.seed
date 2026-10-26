@@ -137,8 +137,8 @@ CONFIG_PACKAGE_ucode-mod-math=y
 # ImmortalWrt is 1.12.25 -- same 1.12.x series, compatible config format
 # (homeproxy's "leave for sing-box 1.13.0" comment confirms it targets 1.12.x),
 # so turning these tags on is enough; no need to swap the whole package.
-CONFIG_SINGBOX_WITH_ACME=y
-CONFIG_SINGBOX_WITH_DHCP=y
+# CONFIG_SINGBOX_WITH_ACME=y
+# CONFIG_SINGBOX_WITH_DHCP=y
 
 # --- qrencode: command-line QR tool ---
 # NOTE: LuCI's WireGuard page renders its QR codes fully client-side via
