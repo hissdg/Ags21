@@ -95,9 +95,9 @@ CONFIG_PACKAGE_luci-proto-wireguard=y
 # build/vendor.sh. Both are copied into package/ before `make defconfig`, so
 # the symbols below resolve; if vendor.sh ever fails, defconfig would silently
 # drop these lines and the firmware would come out without the feature.
-CONFIG_PACKAGE_ddns-go=y
-CONFIG_PACKAGE_luci-app-ddns-go=y
-CONFIG_PACKAGE_luci-i18n-ddns-go-zh-cn=y
+# CONFIG_PACKAGE_ddns-go=y
+# CONFIG_PACKAGE_luci-app-ddns-go=y
+# CONFIG_PACKAGE_luci-i18n-ddns-go-zh-cn=y
 
 # --- homeproxy (NOT in the official feeds -- fetched by build/vendor.sh) ---
 # Only the LuCI layer is vendored: sing-box itself IS in the official feeds
@@ -106,9 +106,9 @@ CONFIG_PACKAGE_luci-i18n-ddns-go-zh-cn=y
 # chinadns-ng is NOT required -- its DNS splitting uses sing-box's own resolver
 # on 127.0.0.1 plus dnsmasq's nftset= directive. The device's dnsmasq 2.93 is
 # built with nftset, so dnsmasq-full is NOT needed either.
-CONFIG_PACKAGE_luci-app-homeproxy=y
-CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn=y
-CONFIG_PACKAGE_sing-box=y
+# CONFIG_PACKAGE_luci-app-homeproxy=y
+# CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn=y
+# CONFIG_PACKAGE_sing-box=y
 # Explicit even though luci-app-homeproxy already depends on them.
 CONFIG_PACKAGE_kmod-nft-tproxy=y
 CONFIG_PACKAGE_kmod-nft-socket=y
